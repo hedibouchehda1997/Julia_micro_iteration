@@ -1,0 +1,9 @@
+g++ main.cpp \
+  -I./libmylib/include \
+  -I/usr/include/julia \
+  -L./libmylib/lib \
+  -L/usr/lib \
+  -lmylib \
+  -ljulia \
+  -Wl,-rpath,'$ORIGIN/libmylib/lib' \
+  -o app
