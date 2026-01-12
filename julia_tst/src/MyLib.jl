@@ -57,6 +57,7 @@ module MyLib
         return nothing
     end
 
+
     Base.@ccallable function jl_load_variables(subproblems_ids::SubProblemsIds)::Cvoid
 
         path_input_julia = "./src/test_micro_it2/inputs_julia"
