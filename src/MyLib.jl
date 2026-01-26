@@ -32,10 +32,15 @@ module MyLib
         flows::Ptr{FlowN} 
         size::Cint
     end
+
+    struct ConstraintsToAdd 
+        constraints::Ptr{Cstring} 
+        size::Cint
+    end
+
     
     function build_dict_from_master_iter_result(input::MasterBendersInput) 
         dict = Dict{String, Int}()
-        println("size of input $(input.size)")
         sizehint!(dict, input.size)
     
         candidates = unsafe_wrap(Array, input.candidates_res, input.size)
@@ -46,35 +51,26 @@ module MyLib
             line_id = unsafe_string(candidate.candidate_line_id)
             dict[line_id] = candidate.is_invested
         end
-        println("the value of the dict ")
-        println(dict)
         return dict
         
     end 
 
-    Base.@ccallable function jl_test()::Cvoid 
-        println("got though jl_test !!!!")
-        return nothing
-    end
-
 
     Base.@ccallable function jl_load_variables(subproblems_ids::SubProblemsIds)::Cvoid
 
-        path_input_julia = "./src/test_micro_it2/inputs_julia"
+
+        path_input_julia = "./inputs_julia"
         global vars_dict = Dict{String, Any}() 
 
         dict_subproblems = Dict{String,Vector{String}}() 
         sizehint!(dict_subproblems,subproblems_ids.n_subproblems)
 
-        println("size of sub ids : $(subproblems_ids.n_subproblems)")
-
+    
         for i in 1:subproblems_ids.n_subproblems 
             key = unsafe_string(unsafe_load(subproblems_ids.subProblems_ids,i))
             dict_subproblems[key] = String[]
         end
 
-        println("prining the dict of subproblems")
-        println(dict_subproblems)
 
         vars_dict["inc_by_sub"]  = dict_subproblems
 
@@ -111,6 +107,11 @@ module MyLib
     
         n_side2_dict = deserialize("$(path_input_julia)/n_side2_dict.jls")
         vars_dict["n_side2_dict"] = n_side2_dict
+
+        vars_dict["HVDC_new_dict"] = nothing 
+        vars_dict["dict_incident_factors"] = nothing 
+        vars_dict["all_monitored_branches"] = nothing 
+
 
         return nothing 
 
@@ -284,8 +285,11 @@ module MyLib
 
     end
 
-    Base.@ccallable function jl_compute_factors_for_microiterations(candidates::MasterBendersInput)::Cvoid
+    Base.@ccallable function jl_compute_factors_for_microiterations(candidates::MasterBendersInput,num_iter::Cint)::Cstring 
 
+
+        println("computing factors for micro iteration ....... ") ; 
+        t1 = time_ns()
         z_dict = build_dict_from_master_iter_result(candidates)
         branches_invested, branches_not_invested = get_invested_branches(z_dict) 
 
@@ -307,12 +311,23 @@ module MyLib
 
 
         dict_incident_factors = compute_incident_factors_after_lines_removal(all_monitored_branches, branches_invested, PTDF_new)
+        t2 = time_ns() 
+
+        elapsed_microseconds = (t2 - t1) / 1000 
+
         
         vars_dict["HVDC_new_dict"] = HVDC_new_dict 
-        vars_dict["dict_incident_factors"] = dict_incident_factors 
+        hvdc_new_dict_path = "./MICRO_ITERATIONS_OUTPUTS/master_iter_$(Int(num_iter))_HVDC_new_dict.jls"
+
+        vars_dict["dict_incident_factors"] = dict_incident_factors
+        dict_incident_factors_path = "./MICRO_ITERATIONS_OUTPUTS/master_iter_$(Int(num_iter))dict_incident_factors.jls"
+
         vars_dict["all_monitored_branches"] = all_monitored_branches 
-        
-        return nothing 
+        all_monitored_branches = "./MICRO_ITERATIONS_OUTPUTS/master_iter_$(Int(num_iter))_all_monitored_branches.jls"
+
+        new_msg = "elapsed time to compute factors for microiterations $(elapsed_microseconds)"        
+
+        return pointer(new_msg) 
 
     end 
 
@@ -400,24 +415,31 @@ module MyLib
                 append!(N_K_constraints_micro_it,[monitored])
             end
         end
+
         
-        return constraints_to_add, N_constraints_micro_it 
+        return constraints_to_add, N_constraints_micro_it,N_K_constraints_micro_it
     end
 
 
-    Base.@ccallable function jl_return_constraints_for_micro_iteration(subproblem_id::Ptr{UInt8},flow_list::FlowNList)::Cvoid
+    Base.@ccallable function jl_return_constraints_for_micro_iteration(subproblem_id::Ptr{UInt8},flow_list::FlowNList)::ConstraintsToAdd
 
-        println("entered in return_constraints_for_micro_iteration")
-        F_N_values = csv_to_Dict("./src/micro_iteration_1_constraints_sub_0_benders_1.csv")
 
+        F_N_values = Dict(unsafe_string(unsafe_load(flow_list.flows, i).line_id) => unsafe_load(flow_list.flows, i).value 
+            for i in 1:flow_list.size)
+
+            
         dict_results_overflow_N = get_overflows_N(unsafe_string(subproblem_id),F_N_values,vars_dict["inc_by_sub"][unsafe_string(subproblem_id)])
 
         dict_results_overflow_N_K = get_overflows_N_K(unsafe_string(subproblem_id), F_N_values)
 
-        constraints_to_add, N_constraints_micro_it = sort_results_and_return_constraints(dict_results_overflow_N,dict_results_overflow_N_K)
-        append!(vars_dict["inc_by_sub"][unsafe_string(subproblem_id)],N_constraints_micro_it)
+        constraints_to_add, N_constraints_micro_it, N_K_constraints_micro_it = sort_results_and_return_constraints(dict_results_overflow_N,dict_results_overflow_N_K)
 
-        return nothing 
+        append!(vars_dict["inc_by_sub"][unsafe_string(subproblem_id)],N_constraints_micro_it)
+        append!(vars_dict["inc_by_sub"][unsafe_string(subproblem_id)],N_K_constraints_micro_it)
+
+        c_string_constraints = [pointer(constraint) for constraint in constraints_to_add] 
+        constraints_ptr = pointer(c_string_constraints)
+        return ConstraintsToAdd(constraints_ptr,Cint(length(constraints_to_add))) 
     end 
 
     
@@ -428,4 +450,3 @@ module MyLib
     
 
 end  
-

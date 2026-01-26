@@ -1,4 +1,4 @@
-g++ main.cpp \
+g++ main2.cpp \
   -I./libmylib/include \
   -I/usr/include/julia \
   -L./libmylib/lib \
@@ -6,4 +6,4 @@ g++ main.cpp \
   -lmylib \
   -ljulia \
   -Wl,-rpath,'$ORIGIN/libmylib/lib' \
-  -o app
+  -o app1
